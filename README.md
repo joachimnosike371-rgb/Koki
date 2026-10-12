@@ -126,6 +126,8 @@ Before any live-chain action, verify the active launch adapter, chain ID, contra
 
 ## Related docs
 
+- [AUTONOMOUS_AGENT_RUNBOOK.md](./docs/AUTONOMOUS_AGENT_RUNBOOK.md) — scheduler, fee reconciliation, and activation steps.
+
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — modules, data flow, where to plug new providers.
 - [ROADMAP.md](./ROADMAP.md) — Phase 1/2/3 plan + per-phase checklists.
 - [LAUNCH.md](./LAUNCH.md) — launch-day runbook.
