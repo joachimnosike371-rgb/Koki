@@ -160,11 +160,14 @@ function parseRefreshOutput(raw: string): CachedMeme[] {
 export async function GET(req: NextRequest) {
   // Auth: Vercel cron requests carry an Authorization: Bearer <CRON_SECRET> header.
   const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json<RefreshResponse>(
+      { ok: false, error: "CRON_SECRET is not configured." },
+      { status: 503 },
+    );
+  }
   const authHeader = req.headers.get("authorization") || "";
-  const ok =
-    !cronSecret /* allow if no secret configured (dev / first-deploy) */ ||
-    authHeader === `Bearer ${cronSecret}`;
-  if (!ok) {
+  if (authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json<RefreshResponse>({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -194,7 +197,7 @@ export async function GET(req: NextRequest) {
       model: process.env.XAI_MODEL_AUTO_CONCEPT || "grok-4.3",
       feature: "cron-refresh-memes",
       liveSearch: {
-        fromDate: isoDate(twoDaysAgo),
+        fromDate: isoDate(oneDayAgo),
         toDate: isoDate(today),
         maxResults: 50, // bigger pool, most candidates will fail the engagement floor
         enableImageUnderstanding: true,
