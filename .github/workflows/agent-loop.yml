@@ -16,7 +16,7 @@ concurrency:
 jobs:
   run-agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Validate scheduler configuration
         env:
@@ -26,7 +26,7 @@ jobs:
           test -n "$AGENT_URL" || { echo "::error::Set repository variable KOKI_AGENT_URL to the deployed Koki base URL."; exit 1; }
           test -n "$CRON_SECRET" || { echo "::error::Set repository secret CRON_SECRET and use the same value in Vercel."; exit 1; }
 
-      - name: Execute agent cycle
+      - name: Execute market evaluation cycle
         env:
           AGENT_URL: ${{ vars.KOKI_AGENT_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
@@ -34,6 +34,18 @@ jobs:
           set -eu
           curl --fail-with-body --silent --show-error --max-time 75 \
             --request POST "${AGENT_URL%/}/api/agent/loop" \
+            --header "Authorization: Bearer ${CRON_SECRET}" \
+            --header "Content-Type: application/json" \
+            --data '{}'
+
+      - name: Reconcile confirmed treasury fee claims
+        env:
+          AGENT_URL: ${{ vars.KOKI_AGENT_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -eu
+          curl --fail-with-body --silent --show-error --max-time 75 \
+            --request POST "${AGENT_URL%/}/api/agent/fees/reconcile" \
             --header "Authorization: Bearer ${CRON_SECRET}" \
             --header "Content-Type: application/json" \
             --data '{}'
