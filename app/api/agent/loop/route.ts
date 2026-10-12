@@ -150,3 +150,8 @@ export async function POST(req: NextRequest) {
     message: "Market scan recorded. Launch execution and fee verification are not yet connected.",
   });
 }
+
+// Vercel Cron invokes GET; authenticated manual schedulers may use POST.
+export async function GET(req: NextRequest) {
+  return POST(req);
+}
