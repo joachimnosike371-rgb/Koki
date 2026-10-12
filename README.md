@@ -108,26 +108,21 @@ See [ROADMAP.md](./ROADMAP.md) for the public roadmap and [ARCHITECTURE.md](./AR
 
 ## Getting started
 
+This repository is being brought up in a **test-first, non-custodial** workflow. Do not deploy contracts, launch tokens, or submit mainnet transactions during setup.
+
 ```bash
-cd koki
-npm install
+npm ci
 cp .env.example .env.local
-# Edit .env.local:
-#   XAI_API_KEY=...                       (or ANTHROPIC_API_KEY / OPENAI_API_KEY for fallback)
-#   NEXT_PUBLIC_SOLANA_RPC_URL=...        (paid RPC strongly recommended for mainnet)
+npm run type-check
+npm run build
 npm run dev
-# open http://localhost:3000
 ```
 
-> ⚠️ **Mainnet only.** Pump.fun does not run on devnet. Real tokens, real SOL.
-> Test with a throwaway concept and a 0-SOL dev buy first.
+Configure provider keys only in your local `.env.local` or the deployment provider's encrypted environment settings. Never commit local environment files. The application can use its mock fallback when no model key is configured.
 
-## Compliance copy rules (enforced in all prompts)
+### Release gate
 
-- No guaranteed-profit, guaranteed-viral, or guaranteed-listing language.
-- No fake partnership claims.
-- No silent posting, sending, transferring, or signing.
-- Provider transparency — the UI always reports which LLM produced any given output.
+Before any live-chain action, verify the active launch adapter, chain ID, contract/program addresses, ABI/IDL, fee accounting, wallet transaction contents, and monitoring against the implementation and tests. The repository currently contains conflicting EVM/Robinhood Chain and Solana/Pump.fun documentation; treat launch execution as **unverified** until that mismatch is resolved. Mainnet remains disabled for this setup.
 
 ## Related docs
 
