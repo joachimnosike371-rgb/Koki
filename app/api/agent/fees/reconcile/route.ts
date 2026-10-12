@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
       ? fromBlock + BigInt(MAX_BLOCKS_PER_SCAN - 1)
       : safeHead;
 
-    const [launchpadLogs, launchpadV2Logs, lockerLogs, sessionResult] = await Promise.all([
+    const [launchpadLogs, launchpadV2Logs, lockerLogs, lockerV2Logs, sessionResult] = await Promise.all([
       client.getLogs({
         address: HAMR_CONTRACTS.launchpad,
         event: protocolClaimedEvent,
@@ -110,6 +110,12 @@ export async function POST(req: NextRequest) {
       }),
       client.getLogs({
         address: HAMR_CONTRACTS.locker,
+        event: lockerProtocolClaimedEvent,
+        fromBlock,
+        toBlock,
+      }),
+      client.getLogs({
+        address: HAMR_V2.locker,
         event: lockerProtocolClaimedEvent,
         fromBlock,
         toBlock,
@@ -140,6 +146,15 @@ export async function POST(req: NextRequest) {
         asset: "ETH" as const,
       })),
       ...lockerLogs
+        .filter((log) => String(log.args.currency).toLowerCase() === WETH.toLowerCase())
+        .map((log) => ({
+          log,
+          amount: log.args.amount,
+          feeKind: "trade_fee" as const,
+          tokenAddress: String(log.args.token).toLowerCase(),
+          asset: "ETH" as const,
+        })),
+      ...lockerV2Logs
         .filter((log) => String(log.args.currency).toLowerCase() === WETH.toLowerCase())
         .map((log) => ({
           log,
