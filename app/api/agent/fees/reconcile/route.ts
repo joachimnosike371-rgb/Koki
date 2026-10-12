@@ -17,7 +17,10 @@ const MAX_BLOCKS_PER_SCAN = 2_000;
 const protocolClaimedEvent = parseAbiItem(
   "event ProtocolFeesClaimed(uint256 amount)",
 );
-const protocolClaimedV2Event = parseAbiItem(\n  "event ProtocolFeesClaimed(address indexed treasury, uint256 amount)",\n);\nconst lockerProtocolClaimedEvent = parseAbiItem(
+const protocolClaimedV2Event = parseAbiItem(
+  "event ProtocolFeesClaimed(address indexed treasury, uint256 amount)",
+);
+const lockerProtocolClaimedEvent = parseAbiItem(
   "event ProtocolClaimed(address indexed token, address indexed currency, uint256 amount)",
 );
 
