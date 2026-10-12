@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { formatEther, parseAbiItem, type Address } from "viem";
 import { getPublicClient } from "@/lib/robinhood/client";
 import { HAMR_CONTRACTS } from "@/lib/hamr/constants";
+import { HAMR_V2 } from "@/lib/hamr/v2";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -16,7 +17,7 @@ const MAX_BLOCKS_PER_SCAN = 2_000;
 const protocolClaimedEvent = parseAbiItem(
   "event ProtocolFeesClaimed(uint256 amount)",
 );
-const lockerProtocolClaimedEvent = parseAbiItem(
+const protocolClaimedV2Event = parseAbiItem(\n  "event ProtocolFeesClaimed(address indexed treasury, uint256 amount)",\n);\nconst lockerProtocolClaimedEvent = parseAbiItem(
   "event ProtocolClaimed(address indexed token, address indexed currency, uint256 amount)",
 );
 
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
       ? fromBlock + BigInt(MAX_BLOCKS_PER_SCAN - 1)
       : safeHead;
 
-    const [launchpadLogs, lockerLogs, sessionResult] = await Promise.all([
+    const [launchpadLogs, launchpadV2Logs, lockerLogs, sessionResult] = await Promise.all([
       client.getLogs({
         address: HAMR_CONTRACTS.launchpad,
         event: protocolClaimedEvent,
