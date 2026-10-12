@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
 
     const sessionStartedAt = session?.started_at ? Date.parse(session.started_at) : Number.POSITIVE_INFINITY;
     const rows: FeeRow[] = allLogs.flatMap(({ log, amount, feeKind, tokenAddress, asset }) => {
-      if (typeof amount !== "bigint" || !log.transactionHash || log.logIndex === null) return [];
+      if (typeof amount !== "bigint" || !log.transactionHash || typeof log.logIndex !== "number") return [];
       const occurredAt = timestamps.get(log.blockNumber.toString());
       if (!occurredAt) return [];
       return [{
