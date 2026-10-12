@@ -1,7 +1,8 @@
 // Wagmi + RainbowKit config for HAMR on Robinhood Chain, with BNB Smart Chain
 // available as an additional EVM wallet network. Launch execution remains
 // gated to Robinhood Chain until the BNB launchpad contracts are deployed.
-import { createConfig, http, defineChain } from "wagmi";
+import { createConfig, http } from "wagmi";
+import { defineChain } from "viem";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { robinhoodChain, PUBLIC_RPC_ABSOLUTE } from "../robinhood/chain";
 
