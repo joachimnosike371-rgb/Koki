@@ -103,6 +103,12 @@ export async function POST(req: NextRequest) {
         toBlock,
       }),
       client.getLogs({
+        address: HAMR_V2.launchpad,
+        event: protocolClaimedV2Event,
+        fromBlock,
+        toBlock,
+      }),
+      client.getLogs({
         address: HAMR_CONTRACTS.locker,
         event: lockerProtocolClaimedEvent,
         fromBlock,
@@ -120,6 +126,13 @@ export async function POST(req: NextRequest) {
 
     const allLogs = [
       ...launchpadLogs.map((log) => ({
+        log,
+        amount: log.args.amount,
+        feeKind: "protocol_fee" as const,
+        tokenAddress: null,
+        asset: "ETH" as const,
+      })),
+      ...launchpadV2Logs.map((log) => ({
         log,
         amount: log.args.amount,
         feeKind: "protocol_fee" as const,
