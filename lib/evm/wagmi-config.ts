@@ -1,22 +1,22 @@
-// Wagmi + RainbowKit config for HAMR on Robinhood Chain.
-//
-// This file is the single source of truth for the wallet stack. The
-// client provider (components/evm/WalletContext) and any server-side
-// viem callers that need to reference the same chain both import from
-// here.
-//
-// Wallet coverage:
-//   - MetaMask (injected) — largest EVM user base
-//   - Coinbase Wallet     — 2nd largest, first-party mobile app
-//   - WalletConnect       — covers Robinhood Wallet + Rainbow + Trust + Zerion + everything mobile
-//
-// Robinhood Wallet supports WalletConnect v2, so as long as WalletConnect
-// is in the connector list the "Robinhood" tile shows up automatically
-// via the RainbowKit modal.
-
-import { createConfig, http } from "wagmi";
+// Wagmi + RainbowKit config for HAMR on Robinhood Chain, with BNB Smart Chain
+// available as an additional EVM wallet network. Launch execution remains
+// gated to Robinhood Chain until the BNB launchpad contracts are deployed.
+import { createConfig, http, defineChain } from "wagmi";
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { robinhoodChain, PUBLIC_RPC_ABSOLUTE } from "../robinhood/chain";
+
+export const bnbSmartChain = defineChain({
+  id: 56,
+  name: "BNB Smart Chain",
+  nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://bsc-dataseed.bnbchain.org"] },
+  },
+  blockExplorers: {
+    default: { name: "BscScan", url: "https://bscscan.com" },
+  },
+  testnet: false,
+});
 
 /** WalletConnect Cloud project id. Free tier is fine. */
 const WC_PROJECT_ID =
@@ -32,16 +32,19 @@ export const wagmiConfig = getDefaultConfig({
   appUrl: "https://hamr.fun",
   appIcon: "https://hamr.fun/hamr-logo.jpg",
   projectId: WC_PROJECT_ID,
-  chains: [robinhoodChain],
+  // BNB is available in the wallet/network selector. Launch forms still
+  // enforce Robinhood Chain because no BNB launchpad contracts are configured.
+  chains: [robinhoodChain, bnbSmartChain],
   transports: {
-    // ABSOLUTE proxy URL. wagmi's WalletConnect connector feeds this
-    // transport URL into the WC provider's rpcMap (extractRpcUrls
-    // prefers transports over chain.rpcUrls), and WalletConnect throws
-    // on relative paths — which silently broke every mobile connect.
     [robinhoodChain.id]: http(PUBLIC_RPC_ABSOLUTE, {
       batch: { wait: 16, batchSize: 60 },
       retryCount: 5,
       retryDelay: 400,
+      timeout: 15_000,
+    }),
+    [bnbSmartChain.id]: http("https://bsc-dataseed.bnbchain.org", {
+      retryCount: 3,
+      retryDelay: 500,
       timeout: 15_000,
     }),
   },
