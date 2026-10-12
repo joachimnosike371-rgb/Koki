@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
   }
 
   const isBatch = Array.isArray(body);
-  const calls = isBatch ? body : [body];
+  const calls: RpcCall[] = Array.isArray(body) ? body : [body as RpcCall];
   if (calls.length === 0 || calls.length > 300 || !calls.every(methodAllowed)) {
     return NextResponse.json(
       { jsonrpc: "2.0", id: null, error: { code: -32601, message: "Method not allowed" } },
