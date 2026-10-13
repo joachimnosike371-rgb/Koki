@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { isAuthorizedAgentRequest } from "@/lib/agent/auth";
+import { listV2Tokens, readV2Snapshot } from "@/lib/hamr/v2";
+import { readTokenMeta } from "@/lib/hamr/read";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,6 +25,33 @@ function rankMarket(item: MarketItem): number {
   return Math.log1p(volume) * 100 + progress / 10_000;
 }
 
+/**
+ * Bounded fallback for when /api/board's historical event scan times out
+ * or the public RPC rejects its large eth_getLogs request. This deliberately
+ * reads only the newest 12 factory entries and does not pretend to know 24h
+ * volume; that field remains zero until a bounded volume index is available.
+ */
+async function readRecentMarkets(): Promise<MarketItem[]> {
+  const tokens = await listV2Tokens(12);
+  const items: MarketItem[] = [];
+  for (const token of tokens) {
+    const [meta, snapshot] = await Promise.all([
+      readTokenMeta(token).catch(() => null),
+      readV2Snapshot(token).catch(() => null),
+    ]);
+    items.push({
+      token_address: token,
+      ticker: meta?.symbol ?? "?",
+      token_name: meta?.name ?? token.slice(0, 8),
+      mcapEth: snapshot ? snapshot.priceEth * snapshot.circulating : null,
+      progressBps: snapshot?.progressBps ?? null,
+      graduated: snapshot?.graduated ?? false,
+      vol24hEth: 0,
+    });
+  }
+  return items;
+}
+
 export async function POST(req: NextRequest) {
   if (!(await isAuthorizedAgentRequest(req))) {
     return NextResponse.json({ ok: false, error: "Agent endpoint requires CRON_SECRET authorization." }, { status: 401 });
@@ -34,17 +63,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Agent ledger unavailable: configure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, then apply the agent ledger migration." }, { status: 503 });
   }
 
-  const baseUrl = new URL(req.url).origin;
-  const boardResponse = await fetch(`${baseUrl}/api/board`, { cache: "no-store" });
-  if (!boardResponse.ok) {
-    return NextResponse.json({ ok: false, error: `Market board returned HTTP ${boardResponse.status}` }, { status: 502 });
+  let items: MarketItem[] = [];
+  let marketSource: "board" | "recent-factory-fallback" = "board";
+  let boardFailure: string | null = null;
+  try {
+    const baseUrl = new URL(req.url).origin;
+    const boardResponse = await fetch(`${baseUrl}/api/board`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!boardResponse.ok) {
+      boardFailure = `market board returned HTTP ${boardResponse.status}`;
+    } else {
+      const board = await boardResponse.json() as { ok?: boolean; items?: MarketItem[] };
+      if (board.ok === false || !Array.isArray(board.items)) {
+        boardFailure = "market board response was invalid";
+      } else {
+        items = board.items
+          .filter((item) => item?.token_address && Number.isFinite(Number(item.vol24hEth)))
+          .map((item) => ({ ...item, score: rankMarket(item) }))
+          .sort((a, b) => b.score - a.score);
+      }
+    }
+  } catch (error) {
+    boardFailure = error instanceof Error ? error.message : "market board request failed";
   }
 
-  const board = await boardResponse.json() as { ok?: boolean; items?: MarketItem[] };
-  const items = (Array.isArray(board.items) ? board.items : [])
-    .filter((item) => item?.token_address && Number.isFinite(Number(item.vol24hEth)))
-    .map((item) => ({ ...item, score: rankMarket(item) }))
-    .sort((a, b) => b.score - a.score);
+  if (boardFailure) {
+    try {
+      const fallbackItems = await readRecentMarkets();
+      items = fallbackItems
+        .filter((item) => item.token_address)
+        .map((item) => ({ ...item, score: rankMarket(item) }))
+        .sort((a, b) => b.score - a.score);
+      marketSource = "recent-factory-fallback";
+    } catch (error) {
+      return NextResponse.json({
+        ok: false,
+        error: "Market board failed and bounded on-chain fallback also failed.",
+        board_error: boardFailure,
+        fallback_error: error instanceof Error ? error.message : "unknown fallback error",
+      }, { status: 502 });
+    }
+  }
 
   const now = new Date();
   const { data: activeSessions, error: sessionReadError } = await supabase
@@ -82,11 +143,15 @@ export async function POST(req: NextRequest) {
     selected_ticker: selected?.ticker ?? null,
     selected_volume_24h: selected?.vol24hEth ?? null,
     payload: {
-      strategy: "volume-first",
+      strategy: marketSource === "board" ? "volume-first" : "recent-market-progress-fallback",
       target: "1 ETH net revenue within 18 hours",
       revenue_verified: false,
       launches_executed: 0,
-      note: "This cycle ranks observable Robinhood Chain markets. It does not execute launches or claim unverified fees as revenue.",
+      market_source: marketSource,
+      board_error: boardFailure,
+      note: marketSource === "board"
+        ? "This cycle ranks observable Robinhood Chain markets. It does not execute launches or claim unverified fees as revenue."
+        : "The full market board was unavailable. This cycle used the newest 12 factory tokens and on-chain snapshots; 24h volume is unknown and recorded as zero, not estimated.",
       top_markets: items.slice(0, 10).map((item) => ({
         token_address: item.token_address,
         ticker: item.ticker,
@@ -138,6 +203,8 @@ export async function POST(req: NextRequest) {
     target_net_revenue_eth: Number(session.target_net_revenue),
     verified_net_revenue_eth: Number(session.net_revenue ?? 0),
     market_count: items.length,
+    market_source: marketSource,
+    board_error: boardFailure,
     top_market: selected ? {
       ticker: selected.ticker,
       token_address: selected.token_address,
@@ -146,11 +213,12 @@ export async function POST(req: NextRequest) {
     } : null,
     launches_executed: 0,
     revenue_verified: false,
-    message: "Market scan recorded. Launch execution and fee verification are not yet connected.",
+    message: marketSource === "board"
+      ? "Market scan recorded. Launch execution and fee verification are not yet connected."
+      : "Fallback market scan recorded from recent factory tokens. 24h volume is unknown; launch execution and fee verification are not yet connected.",
   });
 }
 
-// Vercel Cron invokes GET; authenticated manual schedulers may use POST.
 export async function GET(req: NextRequest) {
   return POST(req);
 }
