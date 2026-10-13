@@ -27,12 +27,11 @@ Optional:
 
 ## 3. Configure GitHub Actions scheduler
 
-In GitHub repository Settings → Secrets and variables → Actions:
+The workflow `.github/workflows/agent-loop.yml` uses GitHub's short-lived OIDC identity token. The server verifies the token signature and restricts it to this repository, the `main` branch, this workflow, and the `schedule` or `workflow_dispatch` event. No GitHub repository copy of `CRON_SECRET` is required.
 
-- Add repository **secret** `CRON_SECRET` with exactly the same value as Vercel.
-- Add repository **variable** `KOKI_AGENT_URL` with the deployed base URL, for example `https://koki-blush.vercel.app` (no trailing slash required).
+The workflow defaults to `https://koki-blush.vercel.app`. If the production domain changes, set the repository **variable** `KOKI_AGENT_URL` to the deployed base URL (no trailing slash required).
 
-The workflow `.github/workflows/agent-loop.yml` runs every 15 minutes and can also be started manually from the Actions tab. It records a market-evaluation cycle first, then reconciles confirmed fee claims.
+The workflow runs every 15 minutes and can also be started manually from the Actions tab. It records a market-evaluation cycle first, then reconciles confirmed fee claims. Vercel Cron callers can still authenticate with the Vercel project's encrypted `CRON_SECRET`.
 
 ## 4. What the fee indexer counts
 
