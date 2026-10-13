@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: koki-agent-loop
@@ -22,31 +23,42 @@ jobs:
         env:
           # Use the repository variable when set; otherwise use the production alias.
           AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          test -n "$AGENT_URL" || { echo "::error::Set repository variable KOKI_AGENT_URL or update the fallback URL."; exit 1; }
-          test -n "$CRON_SECRET" || { echo "::error::Set repository secret CRON_SECRET and use the same value in Vercel."; exit 1; }
+          test -n "$AGENT_URL" || { echo "::error::Agent URL is empty."; exit 1; }
+
+      - name: Request short-lived GitHub OIDC token
+        id: oidc
+        shell: bash
+        run: |
+          set -eu
+          response="$(curl --fail --silent --show-error --get \
+            --data-urlencode "audience=koki-agent" \
+            --header "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}")"
+          token="$(printf '%s' "$response" | jq -er '.value')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
 
       - name: Execute market evaluation cycle
         env:
           AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          GH_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           set -eu
           curl --fail-with-body --silent --show-error --max-time 75 \
             --request POST "${AGENT_URL%/}/api/agent/loop" \
-            --header "Authorization: Bearer ${CRON_SECRET}" \
+            --header "Authorization: Bearer ${GH_OIDC_TOKEN}" \
             --header "Content-Type: application/json" \
             --data '{}'
 
       - name: Reconcile confirmed treasury fee claims
         env:
           AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          GH_OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
         run: |
           set -eu
           curl --fail-with-body --silent --show-error --max-time 75 \
             --request POST "${AGENT_URL%/}/api/agent/fees/reconcile" \
-            --header "Authorization: Bearer ${CRON_SECRET}" \
+            --header "Authorization: Bearer ${GH_OIDC_TOKEN}" \
             --header "Content-Type: application/json" \
             --data '{}'
