@@ -16,6 +16,7 @@ type MarketItem = {
   graduated: boolean;
   vol24hEth: number;
 };
+type RankedMarketItem = MarketItem & { score: number };
 
 function rankMarket(item: MarketItem): number {
   // Volume is the primary signal. Progress is a modest tie-breaker;
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Agent ledger unavailable: configure NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, then apply the agent ledger migration." }, { status: 503 });
   }
 
-  let items: MarketItem[] = [];
+  let items: RankedMarketItem[] = [];
   let marketSource: "board" | "recent-factory-fallback" = "board";
   let boardFailure: string | null = null;
   try {
