@@ -48,7 +48,7 @@ export async function GET() {
       lockerHasCode: Boolean(lockerCode && lockerCode !== "0x"),
     };
   } catch (error) {
-    rpc.error = error instanceof Error ? error.message : "RPC check failed";
+    rpc.error = "RPC or contract-code check failed; inspect server logs for details.";
   }
 
   let database = {
