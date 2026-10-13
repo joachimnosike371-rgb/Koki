@@ -39,6 +39,14 @@ jobs:
           echo "::add-mask::$token"
           echo "token=$token" >> "$GITHUB_OUTPUT"
 
+      - name: Verify production agent readiness
+        env:
+          AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
+        run: |
+          set -eu
+          curl --fail-with-body --silent --show-error --max-time 20 \
+            "${AGENT_URL%/}/api/agent/health"
+
       - name: Execute market evaluation cycle
         env:
           AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
