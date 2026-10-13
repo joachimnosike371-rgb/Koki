@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { isAuthorizedAgentRequest } from "@/lib/agent/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,9 +24,7 @@ function rankMarket(item: MarketItem): number {
 }
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
+  if (!(await isAuthorizedAgentRequest(req))) {
     return NextResponse.json({ ok: false, error: "Agent endpoint requires CRON_SECRET authorization." }, { status: 401 });
   }
 
