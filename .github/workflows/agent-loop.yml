@@ -20,15 +20,16 @@ jobs:
     steps:
       - name: Validate scheduler configuration
         env:
-          AGENT_URL: ${{ vars.KOKI_AGENT_URL }}
+          # Use the repository variable when set; otherwise use the production alias.
+          AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          test -n "$AGENT_URL" || { echo "::error::Set repository variable KOKI_AGENT_URL to the deployed Koki base URL."; exit 1; }
+          test -n "$AGENT_URL" || { echo "::error::Set repository variable KOKI_AGENT_URL or update the fallback URL."; exit 1; }
           test -n "$CRON_SECRET" || { echo "::error::Set repository secret CRON_SECRET and use the same value in Vercel."; exit 1; }
 
       - name: Execute market evaluation cycle
         env:
-          AGENT_URL: ${{ vars.KOKI_AGENT_URL }}
+          AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -eu
@@ -40,7 +41,7 @@ jobs:
 
       - name: Reconcile confirmed treasury fee claims
         env:
-          AGENT_URL: ${{ vars.KOKI_AGENT_URL }}
+          AGENT_URL: ${{ vars.KOKI_AGENT_URL || 'https://koki-blush.vercel.app' }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           set -eu
