@@ -3,4 +3,5 @@
 // file and emits <meta name="twitter:image">.
 
 export { default } from "./opengraph-image";
-export { runtime, alt, size, contentType } from "./opengraph-image";
+export const runtime = "edge";
+export { alt, size, contentType } from "./opengraph-image";
