@@ -54,7 +54,9 @@ Each ledger entry includes transaction hash, log index, block number, block time
 
 ## 6. Verify operation
 
-After deploying the branch and applying the migrations:
+After deploying the branch and applying the migrations, open `GET /api/agent/health` first. It returns HTTP 200 only when the required environment variables, Robinhood Chain RPC/contract code checks, and both database migrations are present. It never returns secret values. HTTP 503 includes per-check readiness flags to identify what is missing.
+
+Then:
 
 1. Run the workflow manually in GitHub Actions.
 2. Confirm the market cycle returns `ok: true`.
