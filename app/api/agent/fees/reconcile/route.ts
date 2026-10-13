@@ -4,6 +4,7 @@ import { getPublicClient } from "@/lib/robinhood/client";
 import { HAMR_CONTRACTS } from "@/lib/hamr/constants";
 import { HAMR_V2 } from "@/lib/hamr/v2";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { isAuthorizedAgentRequest } from "@/lib/agent/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -40,8 +41,7 @@ type FeeRow = {
 };
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
+  if (!(await isAuthorizedAgentRequest(req))) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
