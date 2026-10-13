@@ -1,6 +1,6 @@
 import { createPublicKey, verify as verifySignature } from "node:crypto";
 
-type GitHubJwk = JsonWebKey & { kid: string; kty: string; use?: string; alg?: string };
+type GitHubJwk = JsonWebKey & { [key: string]: string | number | boolean | string[] | undefined; kid: string; kty: string; use?: string; alg?: string };
 type GitHubClaims = {
   iss?: string;
   aud?: string | string[];
