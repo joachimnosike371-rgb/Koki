@@ -4,23 +4,21 @@ import { getPublicClient } from "@/lib/robinhood/client";
 import { readTokenMeta } from "@/lib/hamr/read";
 import { HIDDEN_TOKENS } from "@/lib/hamr/constants";
 import {
-  HAMR_V2,
-  launchpadV2Abi,
-  tokenLaunchedV2Event,
+  listV2Tokens,
   poolSwapEvent,
   readV2Snapshot,
   tokenIsToken0,
 } from "@/lib/hamr/v2";
 import { getSupabaseAdmin, supabaseEnabled } from "@/lib/supabase/server";
 
-// /api/board — the ENTIRE home board in one cached payload.
+// /api/board — bounded, cached market snapshot.
 //
-// Before this, every visitor's browser individually rebuilt the board
-// from dozens of RPC reads (token list, metadata ×8 per token, slot0,
-// swap logs, block timestamps) and the board rendered only after ALL
-// of it resolved — seconds of blank grid per visit. Now the server
-// assembles it once, keeps it warm for ~12s in memory, and Vercel's
-// edge caches it too. Visitors get one small JSON and paint instantly.
+// The old implementation scanned every TokenLaunched event from genesis,
+// then scanned every pool's Swap history from genesis. Both operations grow
+// forever and can exceed public-RPC log limits, causing the whole endpoint
+// to return 502. The board now loads only the newest 24 factory tokens and
+// requests swap logs for the last 24 hours. A single timestamp binary search
+// finds the start block; no per-swap timestamp requests are needed.
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -40,131 +38,138 @@ interface BoardItem {
 }
 
 let cache: { at: number; body: { ok: true; items: BoardItem[] } } | null = null;
-const TTL_MS = 12_000;
+const TTL_MS = 30_000;
 let building: Promise<{ ok: true; items: BoardItem[] }> | null = null;
+const BOARD_TOKEN_LIMIT = 12;
+const LOG_BLOCK_CHUNK = 5_000n;
+
+async function findBlockAtOrAfterTimestamp(
+  cutoffSeconds: number,
+  latestBlock: bigint,
+): Promise<bigint> {
+  let low = 0n;
+  let high = latestBlock;
+  while (low < high) {
+    const mid = (low + high) / 2n;
+    const block = await getPublicClient().getBlock({ blockNumber: mid });
+    if (Number(block.timestamp) < cutoffSeconds) low = mid + 1n;
+    else high = mid;
+  }
+  return low;
+}
 
 async function build(): Promise<{ ok: true; items: BoardItem[] }> {
   const client = getPublicClient();
-
-  // Factory launches: token + pool + birth block, one log scan.
-  const launchLogs = await client.getLogs({
-    address: HAMR_V2.launchpad,
-    event: tokenLaunchedV2Event,
-    fromBlock: 0n,
-    toBlock: "latest",
-  });
-  const launches = launchLogs
-    .map((l) => ({
-      token: (l.args as { token?: Address }).token,
-      pool: (l.args as { pool?: Address }).pool,
-      block: l.blockNumber,
-    }))
-    .filter(
-      (x): x is { token: Address; pool: Address; block: bigint } =>
-        Boolean(x.token && x.pool) &&
-        !HIDDEN_TOKENS.has(x.token!.toLowerCase()),
-    );
-
-  // Birth timestamps.
-  const uniqBlocks = [...new Set(launches.map((l) => l.block))];
-  const tsEntries = await Promise.all(
-    uniqBlocks.map(async (bn) => {
-      try {
-        const b = await client.getBlock({ blockNumber: bn });
-        return [bn.toString(), Number(b.timestamp)] as const;
-      } catch {
-        return [bn.toString(), 0] as const;
-      }
-    }),
+  const tokens = (await listV2Tokens(BOARD_TOKEN_LIMIT)).filter(
+    (token) => !HIDDEN_TOKENS.has(token.toLowerCase()),
   );
-  const tsOf = new Map(tsEntries);
+  const latestBlock = await client.getBlockNumber();
+  const cutoffSeconds = Math.floor(Date.now() / 1000) - 86_400;
 
-  // DB enrichment (source X links) — best effort.
-  const sourceX = new Map<string, string>();
+  // Timestamp lookup is logarithmic in chain height (~20 reads, not one read
+  // per swap). If it fails, still render the board; volume is conservatively
+  // left at zero rather than making a failing volume query take down the page.
+  let volumeStartBlock: bigint | null = null;
+  try {
+    volumeStartBlock = await findBlockAtOrAfterTimestamp(cutoffSeconds, latestBlock);
+  } catch (error) {
+    console.warn("[api/board] Could not determine 24h block boundary:", error);
+  }
+
+  // DB enrichment is best-effort. On-chain launches remain visible even if
+  // Supabase is unavailable or a token was not created through this UI.
+  const launchRows = new Map<string, {
+    source_x_url: string | null;
+    created_at: string | null;
+    wallet_address: string | null;
+  }>();
   if (supabaseEnabled()) {
     try {
       const sb = getSupabaseAdmin();
       if (sb) {
-        const { data } = await sb
+        const { data, error } = await sb
           .from("pons_launches")
-          .select("token_address, source_x_url")
-          .not("source_x_url", "is", null);
-        for (const r of data ?? []) {
-          if (r.token_address && r.source_x_url)
-            sourceX.set(String(r.token_address).toLowerCase(), r.source_x_url);
+          .select("token_address, source_x_url, created_at, wallet_address")
+          .order("created_at", { ascending: false })
+          .limit(100);
+        if (!error) {
+          for (const row of data ?? []) {
+            if (row.token_address) {
+              launchRows.set(String(row.token_address).toLowerCase(), {
+                source_x_url: row.source_x_url ?? null,
+                created_at: row.created_at ?? null,
+                wallet_address: row.wallet_address ?? null,
+              });
+            }
+          }
+        } else {
+          console.warn("[api/board] Supabase enrichment unavailable:", error.message);
         }
       }
-    } catch {
-      /* enrichment only */
+    } catch (error) {
+      console.warn("[api/board] Supabase enrichment failed:", error);
     }
   }
 
-  const cutoff = Math.floor(Date.now() / 1000) - 86_400;
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-  // SEQUENTIAL per token — the public RPC rate-limits bursts (HTTP 429
-  // when the whole board was fetched in parallel). One token at a time
-  // with a small breather keeps every rebuild comfortably under the
-  // limit; the 12s cache means this cost is paid once, not per visitor.
   const items: BoardItem[] = [];
-  for (const { token, pool, block } of launches) {
-    const meta = await readTokenMeta(token).catch(() => null);
-    const snap = await readV2Snapshot(token).catch(() => null);
-    const swaps = await client
-      .getLogs({
-        address: pool,
-        event: poolSwapEvent,
-        fromBlock: 0n,
-        toBlock: "latest",
-      })
-      .catch(() => []);
+  for (const token of tokens) {
+    const [meta, snapshot] = await Promise.all([
+      readTokenMeta(token).catch(() => null),
+      readV2Snapshot(token).catch(() => null),
+    ]);
+    const row = launchRows.get(token.toLowerCase());
 
-    // 24h ETH volume; timestamps only for recent blocks (bounded).
-    let vol = 0;
-    const is0 = tokenIsToken0(token);
-    const swapBlocks = [...new Set(swaps.map((s) => s.blockNumber))].slice(-60);
-    const sTs = new Map<string, number>();
-    for (const bn of swapBlocks) {
+    let volume = 0;
+    if (snapshot && volumeStartBlock !== null) {
       try {
-        const b = await client.getBlock({ blockNumber: bn });
-        sTs.set(bn.toString(), Number(b.timestamp));
-      } catch {
-        sTs.set(bn.toString(), 0);
+        const tokenIs0 = tokenIsToken0(token);
+        // Public RPC providers often cap eth_getLogs ranges. Split the exact
+        // 24-hour interval into bounded chunks; if any chunk fails, discard
+        // the partial total rather than presenting an undercount as 24h volume.
+        for (let fromBlock = volumeStartBlock; fromBlock <= latestBlock; ) {
+          const candidateEnd = fromBlock + LOG_BLOCK_CHUNK - 1n;
+          const toBlock = candidateEnd < latestBlock ? candidateEnd : latestBlock;
+          const swaps = await client.getLogs({
+            address: snapshot.pool,
+            event: poolSwapEvent,
+            fromBlock,
+            toBlock,
+          });
+          for (const swap of swaps) {
+            const args = swap.args as { amount0?: bigint; amount1?: bigint };
+            const wethDelta = tokenIs0 ? args.amount1 : args.amount0;
+            if (typeof wethDelta === "bigint") {
+              volume += Math.abs(Number(formatEther(wethDelta)));
+            }
+          }
+          fromBlock = toBlock + 1n;
+        }
+      } catch (error) {
+        // A busy pool or provider log cap should not fail the entire board.
+        // Never expose a partial chunk sum as a complete 24-hour total.
+        volume = 0;
+        console.warn(`[api/board] 24h volume unavailable for ${token}:`, error);
       }
     }
-    for (const s of swaps) {
-      const ts = sTs.get(s.blockNumber.toString()) ?? 0;
-      if (ts < cutoff) continue;
-      const a = s.args as { amount0?: bigint; amount1?: bigint };
-      const w = is0 ? a.amount1 : a.amount0;
-      if (typeof w !== "bigint") continue;
-      vol += Math.abs(Number(formatEther(w)));
-    }
 
-    const born = tsOf.get(block.toString()) ?? 0;
     items.push({
       token_address: token,
       ticker: meta?.symbol ?? "?",
       token_name: meta?.name ?? token.slice(0, 8),
       logo_url: meta?.logo || null,
-      wallet_address: meta?.creator ?? "",
-      source_x_url: sourceX.get(token.toLowerCase()) ?? null,
-      created_at: born ? new Date(born * 1000).toISOString() : "",
-      mcapEth: snap ? snap.priceEth * snap.circulating : null,
-      progressBps: snap ? snap.progressBps : null,
-      graduated: snap ? snap.graduated : false,
-      vol24hEth: vol,
+      wallet_address: snapshot?.creator ?? row?.wallet_address ?? "",
+      source_x_url: row?.source_x_url ?? null,
+      created_at: row?.created_at ?? "",
+      mcapEth: snapshot ? snapshot.priceEth * snapshot.circulating : null,
+      progressBps: snapshot?.progressBps ?? null,
+      graduated: snapshot?.graduated ?? false,
+      vol24hEth: volume,
     });
-    await sleep(120);
   }
 
-  // Newest first.
-  items.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
-  const dbg = (globalThis as { __boardErr?: string }).__boardErr;
-  return { ok: true as const, items, ...(dbg ? { debug: dbg } : {}) } as {
-    ok: true;
-    items: BoardItem[];
-  };
+  // listV2Tokens returns newest-first, so no second historical event scan or
+  // sort is needed. That preserves useful ordering for on-chain-only tokens.
+  return { ok: true, items };
 }
 
 export async function GET() {
@@ -172,11 +177,12 @@ export async function GET() {
   if (cache && now - cache.at < TTL_MS) {
     return NextResponse.json(cache.body, {
       headers: {
-        "cache-control": "public, s-maxage=10, stale-while-revalidate=60",
+        "cache-control": "public, s-maxage=20, stale-while-revalidate=60",
       },
     });
   }
-  // Coalesce concurrent builds into one.
+
+  // Coalesce concurrent builds into one RPC-heavy operation per instance.
   if (!building) {
     building = build()
       .then((body) => {
@@ -187,16 +193,20 @@ export async function GET() {
         building = null;
       });
   }
+
   try {
     const body = await building;
     return NextResponse.json(body, {
       headers: {
-        "cache-control": "public, s-maxage=10, stale-while-revalidate=60",
+        "cache-control": "public, s-maxage=20, stale-while-revalidate=60",
       },
     });
   } catch (err) {
-    // Serve stale cache over an error any day.
-    if (cache) return NextResponse.json(cache.body);
+    if (cache) {
+      return NextResponse.json(cache.body, {
+        headers: { "cache-control": "public, stale-while-revalidate=60" },
+      });
+    }
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : "board build failed" },
       { status: 502 },
