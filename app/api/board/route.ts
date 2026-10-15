@@ -21,6 +21,9 @@ import { getSupabaseAdmin, supabaseEnabled } from "@/lib/supabase/server";
 // finds the start block; no per-swap timestamp requests are needed.
 
 export const runtime = "nodejs";
+// This endpoint performs live RPC/database reads and must never run at build time.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 export const maxDuration = 30;
 
 interface BoardItem {
