@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { formatEther, type Address } from "viem";
 import { getPublicClient } from "@/lib/robinhood/client";
 import { readTokenMeta } from "@/lib/hamr/read";
+import { HIDDEN_TOKENS } from "@/lib/hamr/constants";
 import {
   listV2Tokens,
   poolSwapEvent,
@@ -39,7 +40,8 @@ interface BoardItem {
 let cache: { at: number; body: { ok: true; items: BoardItem[] } } | null = null;
 const TTL_MS = 30_000;
 let building: Promise<{ ok: true; items: BoardItem[] }> | null = null;
-const BOARD_TOKEN_LIMIT = 24;
+const BOARD_TOKEN_LIMIT = 12;
+const LOG_BLOCK_CHUNK = 5_000n;
 
 async function findBlockAtOrAfterTimestamp(
   cutoffSeconds: number,
@@ -58,7 +60,9 @@ async function findBlockAtOrAfterTimestamp(
 
 async function build(): Promise<{ ok: true; items: BoardItem[] }> {
   const client = getPublicClient();
-  const tokens = await listV2Tokens(BOARD_TOKEN_LIMIT);
+  const tokens = (await listV2Tokens(BOARD_TOKEN_LIMIT)).filter(
+    (token) => !HIDDEN_TOKENS.has(token.toLowerCase()),
+  );
   const latestBlock = await client.getBlockNumber();
   const cutoffSeconds = Math.floor(Date.now() / 1000) - 86_400;
 
@@ -118,22 +122,32 @@ async function build(): Promise<{ ok: true; items: BoardItem[] }> {
     let volume = 0;
     if (snapshot && volumeStartBlock !== null) {
       try {
-        const swaps = await client.getLogs({
-          address: snapshot.pool,
-          event: poolSwapEvent,
-          fromBlock: volumeStartBlock,
-          toBlock: latestBlock,
-        });
         const tokenIs0 = tokenIsToken0(token);
-        for (const swap of swaps) {
-          const args = swap.args as { amount0?: bigint; amount1?: bigint };
-          const wethDelta = tokenIs0 ? args.amount1 : args.amount0;
-          if (typeof wethDelta === "bigint") {
-            volume += Math.abs(Number(formatEther(wethDelta)));
+        // Public RPC providers often cap eth_getLogs ranges. Split the exact
+        // 24-hour interval into bounded chunks; if any chunk fails, discard
+        // the partial total rather than presenting an undercount as 24h volume.
+        for (let fromBlock = volumeStartBlock; fromBlock <= latestBlock; ) {
+          const candidateEnd = fromBlock + LOG_BLOCK_CHUNK - 1n;
+          const toBlock = candidateEnd < latestBlock ? candidateEnd : latestBlock;
+          const swaps = await client.getLogs({
+            address: snapshot.pool,
+            event: poolSwapEvent,
+            fromBlock,
+            toBlock,
+          });
+          for (const swap of swaps) {
+            const args = swap.args as { amount0?: bigint; amount1?: bigint };
+            const wethDelta = tokenIs0 ? args.amount1 : args.amount0;
+            if (typeof wethDelta === "bigint") {
+              volume += Math.abs(Number(formatEther(wethDelta)));
+            }
           }
+          fromBlock = toBlock + 1n;
         }
       } catch (error) {
         // A busy pool or provider log cap should not fail the entire board.
+        // Never expose a partial chunk sum as a complete 24-hour total.
+        volume = 0;
         console.warn(`[api/board] 24h volume unavailable for ${token}:`, error);
       }
     }
