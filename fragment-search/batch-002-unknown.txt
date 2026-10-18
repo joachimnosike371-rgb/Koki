@@ -1,0 +1,55 @@
+# Fragment username search — Batch 002
+
+Source: user's uploaded 16,165-name list.
+Checked in this batch: 1,000 usernames (original order, positions 1001–2000).
+Status: `unknown` from the checker; these are not confirmed available or taken and should be rechecked.
+
+atwin
+aueto
+aumil
+aunts
+avahi
+avick
+avoue
+awber
+awiwi
+ayahs
+azine
+babai
+bahoo
+bahut
+baken
+banis
+bardy
+barks
+barts
+baubo
+beast
+beaus
+bekah
+belie
+bemba
+berea
+bhels
+bigas
+bigha
+bilks
+birrs
+birth
+bixin
+blaff
+blame
+blare
+blats
+blips
+blurt
+bogus
+boist
+boobs
+booby
+botes
+bouto
+bovid
+bowly
+boyce
+boyle
