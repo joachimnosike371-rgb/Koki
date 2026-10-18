@@ -1,0 +1,21 @@
+{
+  "checked_at": "2026-10-18",
+  "source_files": [
+    "fragment-search/batch-001-unknown.txt",
+    "fragment-search/batch-002-unknown.txt",
+    "fragment-search/batch-003-unknown.txt",
+    "fragment-search/batch-004-unknown.txt",
+    "fragment-search/batch-005-unknown.txt",
+    "fragment-search/batch-006-unknown.txt",
+    "fragment-search/batch-007-unknown.txt"
+  ],
+  "requested": 550,
+  "processed": 550,
+  "valid_format_and_telegram_eligible": 550,
+  "invalid": 0,
+  "confirmed_available": 0,
+  "taken": 113,
+  "fragment_collectible": 70,
+  "inconclusive_unknown": 367,
+  "interpretation": "Telegram bare contact pages cannot distinguish unclaimed usernames from some private-profile users; unknown does not mean available."
+}
