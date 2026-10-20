@@ -4,7 +4,10 @@ import path from "node:path";
 const ROOT = "data/fragment-dictionary-scan";
 const RESULTS = path.join(ROOT, "results");
 const OUTPUT = path.join(ROOT, "plural-results");
+const ALL_FILE = path.join(OUTPUT, "all-results.csv");
+const UNKNOWN_FILE = path.join(OUTPUT, "unknown-words.csv");
 const API_URL = "https://tg-username-api.vercel.app/api/v1/check/bulk";
+const BATCH_SIZE = Math.max(1, Math.min(1000, Number(process.env.BATCH_SIZE || 1000)));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function parseCsvLine(line) {
@@ -21,21 +24,37 @@ function parseCsvLine(line) {
   out.push(value);
   return out;
 }
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const headers = parseCsvLine(lines.shift() || "");
+  return lines.filter(Boolean).map(line => {
+    const cells = parseCsvLine(line);
+    return Object.fromEntries(headers.map((h, i) => [h, cells[i] ?? ""]));
+  });
+}
 function csvCell(value) {
   return '"' + String(value ?? "").replaceAll('"', '""') + '"';
 }
+function encodeCsv(headers, rows) {
+  return [headers, ...rows.map(row => headers.map(h => row[h] ?? ""))]
+    .map(row => row.map(csvCell).join(",")).join("\n") + "\n";
+}
+async function readCsv(file) {
+  try { return parseCsv(await fs.readFile(file, "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return []; throw error; }
+}
 async function checkBatch(batch, label) {
   let response;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     response = await fetch(API_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ usernames: batch.map(x => x.plural) })
+      body: JSON.stringify({ usernames: batch.map(x => x.plural_username) })
     });
     if (response.ok) break;
     const retryAfter = Number(response.headers.get("retry-after") || 60);
-    if (attempt === 3) throw new Error(`${label} failed: HTTP ${response.status}`);
-    await sleep(response.status === 429 ? Math.max(1000, retryAfter * 1000) : 3000);
+    if (attempt === 4) throw new Error(`${label} failed: HTTP ${response.status}`);
+    await sleep(response.status === 429 ? Math.max(1000, retryAfter * 1000) : 4000);
   }
   const payload = await response.json();
   if (!Array.isArray(payload.results) || payload.results.length !== batch.length) {
@@ -45,75 +64,111 @@ async function checkBatch(batch, label) {
 }
 
 await fs.mkdir(OUTPUT, { recursive: true });
-const files = (await fs.readdir(RESULTS))
-  .filter(name => /^\d{4}-\d{2}-\d{2}\.csv$/.test(name)).sort().reverse();
-if (!files.length) throw new Error("No existing dictionary scan CSV found.");
-const sourceFile = path.join(RESULTS, files[0]);
-const lines = (await fs.readFile(sourceFile, "utf8")).trim().split(/\r?\n/);
-const headers = parseCsvLine(lines.shift());
-const idx = Object.fromEntries(headers.map((h, i) => [h, i]));
-const rows = lines.map(line => {
-  const cells = parseCsvLine(line);
-  return {
-    username: (cells[idx.username] || "").toLowerCase(),
-    status: cells[idx.status] || "",
-    fragment_status: cells[idx.fragment_status] || ""
-  };
-}).filter(r => /^[a-z]{5,11}$/.test(r.username) && !r.username.endsWith("s"));
-const unique = [...new Map(rows.map(r => [r.username, r])).values()];
-if (unique.length < 100) throw new Error(`Only ${unique.length} candidates found; need 100.`);
-const candidates = [];
-for (let i = 0; i < 100; i++) {
-  const row = unique[Math.floor(i * (unique.length - 1) / 99)];
-  candidates.push({ ...row, plural: row.username + "s" });
-}
+const sourceFiles = (await fs.readdir(RESULTS))
+  .filter(name => /^\d{4}-\d{2}-\d{2}\.csv$/.test(name)).sort();
+if (!sourceFiles.length) throw new Error("No dictionary scan CSVs found.");
 
-const firstResults = [];
-for (let i = 0; i < candidates.length; i += 15) {
-  const batch = candidates.slice(i, i + 15);
-  const results = await checkBatch(batch, `Initial check batch ${i / 15 + 1}`);
-  results.forEach((item, j) => firstResults.push({
-    original: batch[j], firstItem: item, firstStatus: item.result?.status || "unknown",
-    retryItem: null, retryStatus: ""
-  }));
-  await sleep(2600);
+const sourceByName = new Map();
+for (const name of sourceFiles) {
+  const rows = await readCsv(path.join(RESULTS, name));
+  for (const row of rows) {
+    const username = String(row.username || "").toLowerCase();
+    if (/^[a-z]{5,11}$/.test(username) && !username.endsWith("s")) {
+      sourceByName.set(username, {
+        source_username: username,
+        source_status: row.status || "",
+        source_fragment_status: row.fragment_status || ""
+      });
+    }
+  }
 }
-
-// Recheck every inconclusive name once; retain both verdicts for auditability.
-const unknowns = firstResults.filter(x => x.firstStatus === "unknown");
-await sleep(4000);
-for (let i = 0; i < unknowns.length; i += 15) {
-  const batch = unknowns.slice(i, i + 15);
-  const results = await checkBatch(batch.map(x => x.original), `Unknown retry batch ${i / 15 + 1}`);
-  results.forEach((item, j) => {
-    batch[j].retryItem = item;
-    batch[j].retryStatus = item.result?.status || "unknown";
-  });
-  await sleep(2600);
-}
-
-const date = new Date().toISOString().slice(0, 10);
-const outputFile = path.join(OUTPUT, `${date}.csv`);
-const outputHeaders = [
+const sourceRows = [...sourceByName.values()].sort((a, b) => a.source_username.localeCompare(b.source_username));
+const headers = [
   "source_username", "source_status", "source_fragment_status", "plural_username",
   "initial_status", "retry_status", "status", "fragment_status", "price", "currency",
   "fragment_url", "checked_at", "error"
 ];
-const outputRows = firstResults.map(x => {
+const previous = await readCsv(ALL_FILE);
+const seen = new Set(previous.map(row => row.source_username).filter(Boolean));
+const pending = sourceRows.filter(row => !seen.has(row.source_username)).slice(0, BATCH_SIZE);
+if (!pending.length) {
+  const unknown = previous.filter(row => row.status === "unknown");
+  await fs.writeFile(UNKNOWN_FILE, encodeCsv(headers, unknown));
+  console.log(JSON.stringify({
+    message: "No unprocessed source words are currently available.",
+    sourceWordsFound: sourceRows.length,
+    alreadyProcessed: seen.size,
+    unknownTotal: unknown.length,
+    allResultsFile: ALL_FILE,
+    unknownWordsFile: UNKNOWN_FILE
+  }, null, 2));
+  process.exit(0);
+}
+
+const candidates = pending.map(row => ({ ...row, plural_username: row.source_username + "s" }));
+const firstResults = [];
+for (let i = 0; i < candidates.length; i += 15) {
+  const batch = candidates.slice(i, i + 15);
+  const results = await checkBatch(batch, `Initial batch ${Math.floor(i / 15) + 1}`);
+  results.forEach((item, j) => firstResults.push({
+    original: batch[j],
+    firstItem: item,
+    firstStatus: item.result?.status || item.status || "unknown",
+    retryItem: null,
+    retryStatus: ""
+  }));
+  await sleep(2600);
+}
+
+const unknowns = firstResults.filter(x => x.firstStatus === "unknown");
+for (let i = 0; i < unknowns.length; i += 15) {
+  const batch = unknowns.slice(i, i + 15);
+  const results = await checkBatch(batch.map(x => x.original), `Unknown retry batch ${Math.floor(i / 15) + 1}`);
+  results.forEach((item, j) => {
+    batch[j].retryItem = item;
+    batch[j].retryStatus = item.result?.status || item.status || "unknown";
+  });
+  await sleep(2600);
+}
+
+const newRows = firstResults.map(x => {
   const item = x.retryItem && x.retryStatus !== "unknown" ? x.retryItem : x.firstItem;
   const finalStatus = x.retryItem && x.retryStatus !== "unknown" ? x.retryStatus : x.firstStatus;
-  return [
-    x.original.username, x.original.status, x.original.fragment_status,
-    item.username || x.original.plural, x.firstStatus, x.retryStatus, finalStatus,
-    item.fragment?.status || "", item.fragment?.price?.amount ?? "",
-    item.fragment?.price?.currency ?? "",
-    item.fragment?.url || `https://fragment.com/username/${x.original.plural}`,
-    item.checked_at || new Date().toISOString(),
-    item.fragment?.error?.code || item.telegram?.error?.code || ""
-  ];
+  return {
+    source_username: x.original.source_username,
+    source_status: x.original.source_status,
+    source_fragment_status: x.original.source_fragment_status,
+    plural_username: item.username || x.original.plural_username,
+    initial_status: x.firstStatus,
+    retry_status: x.retryStatus,
+    status: finalStatus,
+    fragment_status: item.fragment?.status || "",
+    price: item.fragment?.price?.amount ?? "",
+    currency: item.fragment?.price?.currency ?? "",
+    fragment_url: item.fragment?.url || `https://fragment.com/username/${x.original.plural_username}`,
+    checked_at: item.checked_at || new Date().toISOString(),
+    error: item.fragment?.error?.code || item.telegram?.error?.code || ""
+  };
 });
-await fs.writeFile(outputFile, [outputHeaders, ...outputRows].map(row => row.map(csvCell).join(",")).join("\n") + "\n");
-const counts = Object.fromEntries(["available", "taken", "fragment_collectible", "unknown", "invalid"].map(s => [s, outputRows.filter(r => r[6] === s).length]));
+const allBySource = new Map(previous.map(row => [row.source_username, row]));
+for (const row of newRows) allBySource.set(row.source_username, row);
+const allRows = [...allBySource.values()].sort((a, b) => a.source_username.localeCompare(b.source_username));
+const unknownRows = allRows.filter(row => row.status === "unknown");
+await fs.writeFile(ALL_FILE, encodeCsv(headers, allRows));
+await fs.writeFile(UNKNOWN_FILE, encodeCsv(headers, unknownRows));
+
+const counts = Object.fromEntries(["available", "taken", "fragment_collectible", "unknown", "invalid"].map(status => [
+  status, newRows.filter(row => row.status === status).length
+]));
 console.log(JSON.stringify({
-  sourceFile, checked: outputRows.length, retried: unknowns.length, counts, outputFile
+  sourceWordsFound: sourceRows.length,
+  processedBeforeRun: seen.size,
+  batchSizeRequested: BATCH_SIZE,
+  checkedThisRun: newRows.length,
+  retriedUnknownThisRun: unknowns.length,
+  thisRunCounts: counts,
+  cumulativeChecked: allRows.length,
+  cumulativeUnknown: unknownRows.length,
+  allResultsFile: ALL_FILE,
+  unknownWordsFile: UNKNOWN_FILE
 }, null, 2));
