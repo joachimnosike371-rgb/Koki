@@ -1,6 +1,6 @@
-# Telegram single-word dictionary scan
+# Telegram / Fragment uncommon dictionary scan
 
-This dataset checks single-word English username candidates against the public TG Username API, which checks Telegram presence and queries Fragment when appropriate.
+This scan intentionally avoids the most popular English words. It excludes words in the top-20k English-frequency list, then prioritizes readable single words of 5–11 letters that are more plausible as usernames. It is a candidate strategy, not a guarantee of commercial value.
 
 ## Status meanings
 - `available`: the API observed a clean negative on Telegram and no Fragment listing at check time.
@@ -9,11 +9,10 @@ This dataset checks single-word English username candidates against the public T
 - `unknown`: the API could not safely establish the state. This is inconclusive, not proof that Fragment has no listing.
 
 ## Data
-- `initial-unknown.csv` and `initial-available.csv`: a small initial live-check sample from the beginning of the Google English frequency list; repeated bulk calls returned inconsistent/partial result counts, so these files are provisional and should be rechecked.
-- `results/`: resumable scan output from the full dictionary source, when the scheduled workflow runs.
-- `state.json`: scan offset in the filtered dictionary word list.
+- `initial-unknown.csv` and `initial-available.csv`: provisional initial sample from common words. These are retained for audit only and are not the new scan strategy.
+- `results/`: resumable output from the uncommon-word scan.
+- `state.json`: checkpoint. A strategy version change resets the offset so no candidates are silently skipped.
 
-Dictionary source: https://github.com/dwyl/english-words  
-Checker: https://tg-username-api.vercel.app/docs
+Sources: [dwyl English word list](https://github.com/dwyl/english-words), [Google 10k/20k frequency list](https://github.com/first20hours/google-10000-english), and [TG Username API docs](https://tg-username-api.vercel.app/docs).
 
-The API is limited to 25 requests/minute and 15 usernames per bulk request. The scanner throttles requests and resumes by offset. Availability is a point-in-time signal and may change.
+The API is limited to 25 requests/minute and 15 usernames per bulk request. The scanner throttles requests and resumes by checkpoint. Results are point-in-time; `unknown` must be rechecked and is not the same as available.
