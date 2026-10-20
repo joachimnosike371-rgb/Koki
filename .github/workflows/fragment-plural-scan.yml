@@ -6,7 +6,14 @@ on:
     paths:
       - "scripts/fragment-plural-scan.mjs"
       - ".github/workflows/fragment-plural-scan.yml"
+  schedule:
+    - cron: "47 * * * *"
   workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "New source words to check in this run (max 1000)"
+        required: false
+        default: "1000"
 
 permissions:
   contents: write
@@ -18,7 +25,7 @@ concurrency:
 jobs:
   check-plurals:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,15 +35,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check 100 pluralized usernames against Telegram and Fragment
+      - name: Check next batch of pluralized usernames
+        env:
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '1000' }}
         run: node scripts/fragment-plural-scan.mjs
-      - name: Save separated results
+      - name: Save cumulative results and unknown-only list
         if: always()
         run: |
           if git status --porcelain | grep -q .; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add data/fragment-dictionary-scan/plural-results/
-            git commit -m "Save pluralized Telegram username checks" || true
+            git commit -m "Save pluralized Telegram username batch results" || true
             git push origin HEAD:main
           fi
