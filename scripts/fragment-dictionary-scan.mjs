@@ -4,7 +4,8 @@ import path from "node:path";
 const ROOT = "data/fragment-dictionary-scan";
 const WORDLIST_URL = "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt";
 const API_URL = "https://tg-username-api.vercel.app/api/v1/check/bulk";
-const LIMIT = Math.max(15, Number(process.env.SCAN_LIMIT || 4500));
+const requestedLimit = Number(process.env.SCAN_LIMIT || 4500);
+const LIMIT = Number.isFinite(requestedLimit) ? Math.min(4500, Math.max(15, Math.floor(requestedLimit))) : 4500;
 const STATE_PATH = path.join(ROOT, "state.json");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
