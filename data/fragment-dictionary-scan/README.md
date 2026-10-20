@@ -9,7 +9,7 @@ This dataset checks single-word English username candidates against the public T
 - `unknown`: the API could not safely establish the state. This is inconclusive, not proof that Fragment has no listing.
 
 ## Data
-- `initial-unknown.csv` and `initial-available.csv`: a small initial live-check sample from the first 300 eligible words of the Google 10,000/20,000 English frequency list; the API returned inconsistent/partial responses across repeated requests, so these are explicitly provisional and should be rechecked.
+- `initial-unknown.csv` and `initial-available.csv`: a small initial live-check sample from the beginning of the Google English frequency list; repeated bulk calls returned inconsistent/partial result counts, so these files are provisional and should be rechecked.
 - `results/`: resumable scan output from the full dictionary source, when the scheduled workflow runs.
 - `state.json`: scan offset in the filtered dictionary word list.
 
