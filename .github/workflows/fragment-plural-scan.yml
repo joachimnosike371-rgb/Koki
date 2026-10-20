@@ -1,0 +1,42 @@
+name: Check pluralized Fragment usernames
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/fragment-plural-scan.mjs"
+      - ".github/workflows/fragment-plural-scan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fragment-plural-scan
+  cancel-in-progress: false
+
+jobs:
+  check-plurals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check 100 pluralized usernames against Telegram and Fragment
+        run: node scripts/fragment-plural-scan.mjs
+      - name: Save separated results
+        if: always()
+        run: |
+          if git status --porcelain | grep -q .; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/fragment-dictionary-scan/plural-results/
+            git commit -m "Save pluralized Telegram username checks" || true
+            git push origin HEAD:main
+          fi
