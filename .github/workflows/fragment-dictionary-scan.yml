@@ -1,6 +1,11 @@
 name: Fragment dictionary username scan
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/fragment-dictionary-scan.mjs"
+      - ".github/workflows/fragment-dictionary-scan.yml"
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
